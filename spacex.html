@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>SpaceX Launch Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Bootstrap 5 CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Leaflet CSS & JS (OpenStreetMap) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+  <style>
+    /* Layout base: html, body e wrapper per mantenere il footer in fondo */
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+    .wrapper {
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+    .content {
+      flex: 1;
+      padding: 20px;
+    }
+    /* Temi: Day / Night */
+    body.day {
+      background-color: #f8f9fa;
+      color: #212529;
+    }
+    body.night {
+      background-color: #212529;
+      color: #f8f9fa;
+    }
+    /* Header e Footer */
+    header, footer {
+      background-color: #333;
+      color: #fff;
+      padding: 15px;
+      text-align: center;
+    }
+    /* Container principale */
+    .container-main {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 15px;
+    }
+    /* Controlli: pulsanti di ordinamento/filtro */
+    .controls {
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .controls button {
+      margin: 0 5px;
+    }
+    /* Card dei Lanci – stile Day */
+    .launch-card {
+      margin-bottom: 20px;
+      padding: 15px;
+      background-color: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 0.25rem;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .launch-card h4 {
+      margin-bottom: 10px;
+    }
+    .launch-card p {
+      font-size: 0.95rem;
+    }
+    /* Stile Night per le Card e la Modale */
+    body.night .launch-card {
+      background-color: #343a40;
+      border-color: #495057;
+      color: #f8f9fa;
+    }
+    body.night .modal-content {
+      background-color: #343a40;
+      color: #f8f9fa;
+    }
+    /* Grafico: posizionato sotto i controlli */
+    #chartContainer {
+      margin-bottom: 10px;
+      position: relative;
+      height: 300px;
+    }
+    /* Mappa: dimensione fissa */
+    #mapContainer {
+      margin-bottom: 20px;
+      height: 400px;
+    }
+    /* Paginazione */
+    #paginationContainer {
+      margin-top: 20px;
+      text-align: center;
+    }
+    /* Footer */
+    footer {
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body class="day">
+  <div class="wrapper">
+    <!-- HEADER con Toggle Tema -->
+    <header>
+      <div class="container d-flex justify-content-between align-items-center">
+        <h1 class="m-0">SpaceX Launch Tracker</h1>
+        <div>
+          <label for="themeToggle" class="form-check-label me-2">Tema</label>
+          <input type="checkbox" id="themeToggle" class="form-check-input">
+          <span id="themeText">Day</span>
+        </div>
+      </div>
+    </header>
+    
+    <!-- CONTENUTO -->
+    <div class="content container-main">
+      <!-- Controlli: pulsanti di ordinamento -->
+      <div class="controls mb-4">
+        <button id="btnDate" class="btn btn-success">Ordina per Data</button>
+        <button id="btnName" class="btn btn-primary">Ordina per Nome</button>
+        <button id="btnFlight" class="btn btn-info">Ordina per Flight #</button>
+        <!-- Bottone opzionale: mostra solo lanci futuri -->
+        <button id="btnUpcoming" class="btn btn-warning">Solo Lanci Futuri</button>
+      </div>
+      
+      <!-- Grafico a Barre: Lanci per Anno -->
+      <div id="chartContainer" class="mb-4">
+        <canvas id="launchChart"></canvas>
+      </div>
+      
+      <!-- Mappa (Leaflet/OpenStreetMap) -->
+      <div id="mapContainer" class="mb-4"></div>
+      
+      <!-- Alert per lanci rilevanti (esempio: lanci upcoming) -->
+      <div id="alertContainer"></div>
+      
+      <!-- Lista dei Lanci (Card) -->
+      <div id="launchContainer"></div>
+      
+      <!-- Paginazione -->
+      <nav>
+        <ul id="paginationContainer" class="pagination justify-content-center"></ul>
+      </nav>
+    </div>
+    
+    <!-- FOOTER -->
+    <footer>
+      <p>Realizzato da Bocaletto Luca © <span id="currentYear"></span></p>
+    </footer>
+  </div>
+  
+  <!-- MODALE per i Dettagli del Lancio -->
+  <div class="modal fade" id="detailModal" tabindex="-1" aria-labelledby="detailModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="detailModalLabel">Dettaglio Lancio</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+        </div>
+        <div class="modal-body" id="modalBodyContent">
+          <!-- I dettagli verranno caricati qui -->
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Bootstrap Bundle JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  
+  <script>
+    // Imposta l'anno corrente nel footer
+    document.getElementById("currentYear").textContent = new Date().getFullYear();
+    
+    /* === Toggle Tema (Day/Night) === */
+    const themeToggle = document.getElementById("themeToggle");
+    const themeText = document.getElementById("themeText");
+    themeToggle.addEventListener("change", () => {
+      if (themeToggle.checked) {
+        document.body.classList.replace("day", "night");
+        themeText.textContent = "Night";
+      } else {
+        document.body.classList.replace("night", "day");
+        themeText.textContent = "Day";
+      }
+    });
+    
+    /* === Variabili Globali === */
+    let launches = [];           // Array per i lanci SpaceX
+    let launchpads = {};         // Mappa: launchpad id -> dettagli
+    let currentSortedData = [];  // Array ordinato corrente per paginazione
+    let currentPage = 1;
+    const pageSize = 20;
+    let launchChart;             // Riferimento al grafico Chart.js
+    let launchMap;               // Riferimento alla mappa Leaflet
+    let mapMarkers = [];         // Array dei marker della mappa
+    
+    /* === Inizializza la Mappa (Leaflet/OpenStreetMap) === */
+    function initMap() {
+      launchMap = L.map("mapContainer").setView([20, 0], 2);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+      }).addTo(launchMap);
+    }
+    initMap();
+    
+    /* === Carica i Dati dei Launchpads (SpaceX API) === */
+    async function loadLaunchpads() {
+      try {
+        const response = await fetch("https://api.spacexdata.com/v4/launchpads");
+        if (!response.ok) throw new Error("Errore nel caricamento dei launchpads: " + response.status);
+        const pads = await response.json();
+        pads.forEach(pad => launchpads[pad.id] = pad);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+    loadLaunchpads();
+    
+    /* === Carica i Dati dei Lanci (SpaceX API) === */
+    async function loadLaunches() {
+      try {
+        const response = await fetch("https://api.spacexdata.com/v4/launches");
+        if (!response.ok) throw new Error("Errore nel caricamento dei lanci: " + response.status);
+        launches = await response.json();
+        // Ordinamento iniziale: per Data (dal più recente)
+        sortByDate();
+      } catch (error) {
+        console.error(error);
+        document.getElementById("launchContainer").innerHTML = `<div class="alert alert-danger">${error.message}</div>`;
+      }
+    }
+    loadLaunches();
+    
+    /* === Funzioni di Ordinamento === */
+    function sortByDate() {
+      const sorted = launches.slice().sort((a, b) => new Date(b.date_utc) - new Date(a.date_utc));
+      updateSortedData(sorted);
+    }
+    
+    function sortByName() {
+      const sorted = launches.slice().sort((a, b) => a.name.localeCompare(b.name));
+      updateSortedData(sorted);
+    }
+    
+    function sortByFlight() {
+      const sorted = launches.slice().sort((a, b) => {
+        // Se i flight_number sono presenti, usali; altrimenti ordina per data
+        if(a.flight_number && b.flight_number) return a.flight_number - b.flight_number;
+        return new Date(a.date_utc) - new Date(b.date_utc);
+      });
+      updateSortedData(sorted);
+    }
+    
+    // Pulsante facoltativo per filtrare solo i lanci futuri (upcoming)
+    function filterUpcoming() {
+      const filtered = launches.filter(l => l.upcoming === true);
+      updateSortedData(filtered);
+    }
+    
+    /* === Imposta i Listener per i Pulsanti di Ordinamento === */
+    document.getElementById("btnDate").addEventListener("click", sortByDate);
+    document.getElementById("btnName").addEventListener("click", sortByName);
+    document.getElementById("btnFlight").addEventListener("click", sortByFlight);
+    document.getElementById("btnUpcoming").addEventListener("click", filterUpcoming);
+    
+    /* === Aggiorna l'Array Ordinato e Visualizza (Lista, Grafico, Mappa, Alert) === */
+    function updateSortedData(sortedArray) {
+      currentSortedData = sortedArray;
+      currentPage = 1;
+      displayPage();
+      updateChart(sortedArray);
+      updateMap(sortedArray);
+      checkRisk(sortedArray);
+    }
+    
+    /* === Paginazione === */
+    function displayPage() {
+      const startIdx = (currentPage - 1) * pageSize;
+      const pageData = currentSortedData.slice(startIdx, startIdx + pageSize);
+      displayLaunches(pageData);
+      generatePagination(currentSortedData.length);
+    }
+    
+    function generatePagination(totalItems) {
+      const totalPages = Math.ceil(totalItems / pageSize);
+      let html = "";
+      if (totalPages <= 1) {
+        document.getElementById("paginationContainer").innerHTML = "";
+        return;
+      }
+      html += `<li class="page-item ${currentPage === 1 ? "disabled" : ""}">
+                <a class="page-link" href="#" onclick="changePage(${currentPage - 1})">Prev</a>
+              </li>`;
+      for (let i = 1; i <= totalPages; i++) {
+        html += `<li class="page-item ${currentPage === i ? "active" : ""}">
+                  <a class="page-link" href="#" onclick="changePage(${i})">${i}</a>
+                </li>`;
+      }
+      html += `<li class="page-item ${currentPage === totalPages ? "disabled" : ""}">
+                <a class="page-link" href="#" onclick="changePage(${currentPage + 1})">Next</a>
+              </li>`;
+      document.getElementById("paginationContainer").innerHTML = html;
+    }
+    
+    function changePage(page) {
+      currentPage = page;
+      displayPage();
+    }
+    
+    /* === Visualizza i Lanci in Card === */
+    function displayLaunches(dataArray) {
+      const container = document.getElementById("launchContainer");
+      container.innerHTML = "";
+      if (dataArray.length === 0) {
+        container.innerHTML = "<p class='text-center'>Nessun lancio trovato.</p>";
+        return;
+      }
+      dataArray.forEach(launch => {
+        const name = launch.name || "N/D";
+        const dateStr = new Date(launch.date_utc).toLocaleString();
+        const flight = launch.flight_number || "N/D";
+        const status = launch.upcoming ? "Upcoming" : (launch.success ? "Success" : "Failure");
+        const card = document.createElement("div");
+        card.className = "launch-card";
+        card.innerHTML = `
+          <h4>${escapeHtml(name)}</h4>
+          <p><strong>Data:</strong> ${dateStr}</p>
+          <p><strong>Flight #:</strong> ${flight} • <strong>Status:</strong> ${status}</p>
+          <button class="btn btn-sm btn-secondary" onclick="loadLaunchDetails('${launch.id}')">Leggi di più</button>
+        `;
+        container.appendChild(card);
+      });
+    }
+    
+    /* === Aggiorna il Grafico (raggruppa per anno) === */
+    function updateChart(dataArray) {
+      const counts = {};
+      dataArray.forEach(launch => {
+        const year = new Date(launch.date_utc).getFullYear();
+        counts[year] = (counts[year] || 0) + 1;
+      });
+      const years = Object.keys(counts).sort();
+      const values = years.map(year => counts[year]);
+      const ctx = document.getElementById("launchChart").getContext("2d");
+      if (launchChart instanceof Chart) { launchChart.destroy(); }
+      launchChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels: years,
+          datasets: [{
+            label: "Numero di Lanci",
+            data: values,
+            backgroundColor: "rgba(255, 99, 132, 0.6)",
+            borderColor: "rgba(255, 99, 132, 1)",
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+    
+    /* === Aggiorna la Mappa (Leaflet) con i Marker dei Launchpad === */
+    function updateMap(dataArray) {
+      mapMarkers.forEach(marker => launchMap.removeLayer(marker));
+      mapMarkers = [];
+      dataArray.forEach(launch => {
+        const lpId = launch.launchpad;
+        if (launchpads[lpId]) {
+          const pad = launchpads[lpId];
+          const lat = pad.latitude, lon = pad.longitude;
+          const popupContent = `<strong>${escapeHtml(launch.name)}</strong><br>
+                                Data: ${new Date(launch.date_utc).toLocaleString()}<br>
+                                Flight #: ${launch.flight_number || "N/D"}<br>
+                                Launchpad: ${escapeHtml(pad.full_name)}`;
+          const marker = L.marker([lat, lon]).bindPopup(popupContent);
+          marker.addTo(launchMap);
+          mapMarkers.push(marker);
+        }
+      });
+      if (mapMarkers.length > 0) {
+        const group = L.featureGroup(mapMarkers);
+        launchMap.fitBounds(group.getBounds());
+      }
+    }
+    
+    /* === Carica i Dettagli di un Lancio e Mostra nella Modale === */
+    function loadLaunchDetails(launchId) {
+      const launch = launches.find(l => l.id === launchId);
+      if (!launch) return;
+      const name = launch.name || "N/D";
+      const dateStr = new Date(launch.date_utc).toLocaleString();
+      const flight = launch.flight_number || "N/D";
+      const status = launch.upcoming ? "Upcoming" : (launch.success ? "Success" : "Failure");
+      const details = launch.details || "Nessun dettaglio disponibile.";
+      const links = launch.links || {};
+      const wiki = links.wikipedia ? `<a href="${links.wikipedia}" target="_blank" class="btn btn-sm btn-primary">Wikipedia</a>` : "";
+      const webcast = links.webcast ? `<a href="${links.webcast}" target="_blank" class="btn btn-sm btn-primary">Webcast</a>` : "";
+      let html = `<h2>${escapeHtml(name)}</h2>
+                  <p><strong>Data:</strong> ${dateStr}</p>
+                  <p><strong>Flight Number:</strong> ${flight}</p>
+                  <p><strong>Status:</strong> ${status}</p>
+                  <p><strong>Dettagli:</strong> ${details}</p>
+                  <div>${wiki} ${webcast}</div>`;
+      openDetailModal(name, html);
+    }
+    
+    /* === Apertura della Modale dei Dettagli === */
+    function openDetailModal(title, contentHTML) {
+      const modalTitle = document.getElementById("detailModalLabel");
+      const modalBody = document.getElementById("modalBodyContent");
+      modalTitle.textContent = title;
+      modalBody.innerHTML = contentHTML;
+      const modalElem = document.getElementById("detailModal");
+      const modal = new bootstrap.Modal(modalElem, { backdrop: "static" });
+      modal.show();
+    }
+    
+    /* === Funzione per eseguire l'escape di caratteri HTML === */
+    function escapeHtml(text) {
+      if (typeof text !== "string") return text;
+      const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
+      return text.replace(/[&<>"']/g, m => map[m]);
+    }
+    
+    /* === Funzione per segnalare eventuali lanci rilevanti (es. upcoming) === */
+    function checkRisk(dataArray) {
+      const risky = dataArray.filter(l => l.upcoming === true);
+      const alertContainer = document.getElementById("alertContainer");
+      if (risky.length > 0) {
+        alertContainer.innerHTML = `<div class="alert alert-warning">
+          Attenzione: Sono presenti ${risky.length} lanci upcoming.
+          <a href="https://www.spacex.com/updates/" target="_blank" class="alert-link">Scopri di più</a>
+        </div>`;
+      } else {
+        alertContainer.innerHTML = "";
+      }
+    }
+    
+    /* === Gestione della Chiusura della Modale per Evitare Residui === */
+    document.getElementById("detailModal").addEventListener("hidden.bs.modal", function() {
+      document.getElementById("modalBodyContent").innerHTML = "";
+      document.body.style.overflow = "auto";
+      document.body.classList.remove("modal-open");
+      document.querySelectorAll(".modal-backdrop").forEach(el => el.remove());
+    });
+  </script>
+</body>
+</html>
